@@ -136,7 +136,7 @@ __global__ void imageToBuffer(GBufferPixel* gBuffer, glm::ivec2 resolution,
     }
 }
 
-__global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* gBuffer, int filterSize) {
+__global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* gBuffer, int logFilterSize) {
     
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -146,11 +146,11 @@ __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* g
         int index = x + (y * resolution.x);
 
         // how many iterations to fill filter size?
-        int iterations = log2(filterSize) + 1.f;
+        int iterations = logFilterSize;
 
         for (int i = 0; i < iterations; i++) {
             int step = pow(2.f, i);
-            denoiseIteration(index, step, gBuffer);
+            denoiseIteration(index, x, y, step, resolution, gBuffer);
             pingPongGbuffer(index, gBuffer);
         }
 
@@ -162,20 +162,59 @@ __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* g
     }
 }
 
-__device__ void denoiseIteration(int index, int step, GBufferPixel* gBuffer) {
+__device__ void denoiseIteration(int index, int x, int y, int step, glm::ivec2 resolution, GBufferPixel* gBuffer) {
+    
     //kernel
-    float kernel[25] = {1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f,
+    float kernel[25] = { 1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f,
                         1.f / 16.f, 1.f / 4.f , 1.f / 4.f , 1.f / 4.f , 1.f / 16.f,
-                        1.f / 16.f, 1.f / 4.f , 3.f / 8.f , 1.f / 4.f , 1.f / 16.f, 
-                        1.f / 16.f, 1.f / 4.f , 1.f / 4.f , 1.f / 4.f , 1.f / 16.f, 
-                        1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f};
+                        1.f / 16.f, 1.f / 4.f , 3.f / 8.f , 1.f / 4.f , 1.f / 16.f,
+                        1.f / 16.f, 1.f / 4.f , 1.f / 4.f , 1.f / 4.f , 1.f / 16.f,
+                        1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f };
 
     //offset
-    glm::vec2 offset[25] = { glm::vec2(-2, 2) ,glm::vec2(-1, 2), glm::vec2(0, 2) , glm::vec2(1, 2) ,glm::vec2(2, 2),
+    glm::ivec2 offset[25] = { glm::vec2(-2, 2) ,glm::vec2(-1, 2), glm::vec2(0, 2) , glm::vec2(1, 2) ,glm::vec2(2, 2),
                         glm::vec2(-2, 1) ,glm::vec2(-1, 1), glm::vec2(0, 1) , glm::vec2(1, 1) ,glm::vec2(2, 1),
                          glm::vec2(-2, 0) , glm::vec2(-1, 0) , glm::vec2(0, 0) , glm::vec2(1, 0) , glm::vec2(2, 0),
                         glm::vec2(-2, -1) ,glm::vec2(-1, -1), glm::vec2(0, -1) , glm::vec2(1, -1) ,glm::vec2(2, -1),
                         glm::vec2(-2, -2) ,glm::vec2(-1, -2), glm::vec2(0, -2) , glm::vec2(1, -2) ,glm::vec2(2, -2) };
+
+    glm::vec3 sum = glm::vec3(0.f);
+    glm::vec3 curr_pos = gBuffer[index].position;
+    glm::vec3 curr_nor = gBuffer[index].normal;
+    glm::vec3 curr_color = gBuffer[index].denoise_color;
+
+    float c_phi = 1.f;
+    float n_phi = 1.f;
+    float p_phi = 1.f;
+
+    float cum_w = 0.f;
+    for (int i = 0; i < 25; i++) {
+        glm::vec2 temp_cords = glm::clamp(glm::ivec2(x, y) + offset[i] * step, glm::ivec2(0.f, 0.f), resolution);
+        if (temp_cords.x < resolution.x && temp_cords.y < resolution.y) {
+            int temp_index = temp_cords.x + (temp_cords.y * resolution.x);
+
+            glm::vec3 temp_color = gBuffer[temp_index].denoise_color;
+            glm::vec3 t = curr_color - temp_color;
+            float dist2 = glm::dot(t, t);
+            float color_weight = glm::min(glm::exp(-(dist2)/c_phi), 1.f);
+
+            glm::vec3 temp_nor = gBuffer[temp_index].normal;
+            t = curr_nor - temp_nor;
+            dist2 = glm::dot(t, t);
+            float nor_weight = glm::min(glm::exp(-(dist2) / n_phi), 1.f);
+
+            glm::vec3 temp_pos = gBuffer[temp_index].position;
+            t = curr_pos - temp_pos;
+            dist2 = glm::dot(t, t);
+            float pos_weight = glm::min(glm::exp(-(dist2) / p_phi), 1.f);
+
+            float weight = color_weight * nor_weight * pos_weight;
+            sum += temp_color * 1.f * kernel[i];
+            cum_w += 1.f * kernel[i];
+        }
+    }
+    gBuffer[index].updated_denoise_color = sum / cum_w;
+
 }
 
 __device__ void pingPongGbuffer(int index, GBufferPixel* gBuffer) {
