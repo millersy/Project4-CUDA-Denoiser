@@ -117,6 +117,71 @@ __global__ void gbufferToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* g
     }
 }
 
+__global__ void imageToBuffer(GBufferPixel* gBuffer, glm::ivec2 resolution,
+    int iter, glm::vec3* image) {
+    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+    if (x < resolution.x && y < resolution.y) {
+        int index = x + (y * resolution.x);
+        glm::vec3 pix = image[index];
+
+        glm::ivec3 color;
+        color.x = glm::clamp((int)(pix.x / iter * 255.0), 0, 255);
+        color.y = glm::clamp((int)(pix.y / iter * 255.0), 0, 255);
+        color.z = glm::clamp((int)(pix.z / iter * 255.0), 0, 255);
+
+        // Each thread writes one pixel location in the texture (textel)
+        gBuffer[index].denoise_color = color;
+    }
+}
+
+__global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* gBuffer, int filterSize) {
+    
+    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+    if (x < resolution.x && y < resolution.y) {
+
+        int index = x + (y * resolution.x);
+
+        // how many iterations to fill filter size?
+        int iterations = log2(filterSize) + 1.f;
+
+        for (int i = 0; i < iterations; i++) {
+            int step = pow(2.f, i);
+            denoiseIteration(index, step, gBuffer);
+            pingPongGbuffer(index, gBuffer);
+        }
+
+        glm::vec3 color = gBuffer[index].denoise_color;
+        pbo[index].w = 0;
+        pbo[index].x = color.x;
+        pbo[index].y = color.y;
+        pbo[index].z = color.z;
+    }
+}
+
+__device__ void denoiseIteration(int index, int step, GBufferPixel* gBuffer) {
+    //kernel
+    float kernel[25] = {1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f,
+                        1.f / 16.f, 1.f / 4.f , 1.f / 4.f , 1.f / 4.f , 1.f / 16.f,
+                        1.f / 16.f, 1.f / 4.f , 3.f / 8.f , 1.f / 4.f , 1.f / 16.f, 
+                        1.f / 16.f, 1.f / 4.f , 1.f / 4.f , 1.f / 4.f , 1.f / 16.f, 
+                        1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f};
+
+    //offset
+    glm::vec2 offset[25] = { glm::vec2(-2, 2) ,glm::vec2(-1, 2), glm::vec2(0, 2) , glm::vec2(1, 2) ,glm::vec2(2, 2),
+                        glm::vec2(-2, 1) ,glm::vec2(-1, 1), glm::vec2(0, 1) , glm::vec2(1, 1) ,glm::vec2(2, 1),
+                         glm::vec2(-2, 0) , glm::vec2(-1, 0) , glm::vec2(0, 0) , glm::vec2(1, 0) , glm::vec2(2, 0),
+                        glm::vec2(-2, -1) ,glm::vec2(-1, -1), glm::vec2(0, -1) , glm::vec2(1, -1) ,glm::vec2(2, -1),
+                        glm::vec2(-2, -2) ,glm::vec2(-1, -2), glm::vec2(0, -2) , glm::vec2(1, -2) ,glm::vec2(2, -2) };
+}
+
+__device__ void pingPongGbuffer(int index, GBufferPixel* gBuffer) {
+    gBuffer[index].denoise_color = gBuffer[index].updated_denoise_color;
+}
+
 static Scene* hst_scene = NULL;
 static glm::vec3* dev_image = NULL;
 static Geom* dev_geoms = NULL;
@@ -555,6 +620,18 @@ void showGBuffer(uchar4* pbo) {
 
     // CHECKITOUT: process the gbuffer results and send them to OpenGL buffer for visualization
     gbufferToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, dev_gBuffer);
+}
+
+void showDenoise(uchar4* pbo, int iter, int filterSize) {
+    const Camera& cam = hst_scene->state.camera;
+    const dim3 blockSize2d(8, 8);
+    const dim3 blocksPerGrid2d(
+        (cam.resolution.x + blockSize2d.x - 1) / blockSize2d.x,
+        (cam.resolution.y + blockSize2d.y - 1) / blockSize2d.y);
+
+    // CHECKITOUT: process the gbuffer results and send them to OpenGL buffer for visualization
+    imageToBuffer << <blocksPerGrid2d, blockSize2d >> > (dev_gBuffer, cam.resolution, iter, dev_image);
+    denoiseToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, dev_gBuffer, filterSize);
 }
 
 void showImage(uchar4* pbo, int iter) {

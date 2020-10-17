@@ -96,4 +96,6 @@ struct GBufferPixel {
     float t;
     glm::vec3 normal;
     glm::vec3 position;
+    glm::vec3 denoise_color;
+    glm::vec3 updated_denoise_color;
 };
