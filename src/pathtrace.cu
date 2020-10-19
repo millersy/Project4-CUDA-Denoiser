@@ -137,7 +137,7 @@ __global__ void imageToBuffer(GBufferPixel* gBuffer, glm::ivec2 resolution,
 }
 
 __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, 
-    int c_weight, int p_weight, int n_weight, GBufferPixel* gBuffer, int logFilterSize) {
+    float c_weight, float p_weight, float n_weight, GBufferPixel* gBuffer, int logFilterSize) {
     
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -152,6 +152,7 @@ __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution,
             __syncthreads();
             pingPongGbuffer(index, gBuffer);
             __syncthreads();
+            c_weight /= 2.f;
         }
 
         glm::vec3 color = gBuffer[index].denoise_color;
@@ -163,7 +164,7 @@ __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution,
 }
 
 __device__ void denoiseIteration(int index, int x, int y, int step, 
-    int c_weight, int p_weight, int n_weight, glm::ivec2 resolution, GBufferPixel* gBuffer) {
+    float c_weight, float p_weight, float n_weight, glm::ivec2 resolution, GBufferPixel* gBuffer) {
     
     //kernel
     float kernel[25] = { 1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f,
@@ -173,11 +174,11 @@ __device__ void denoiseIteration(int index, int x, int y, int step,
                         1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f };
 
     //offset
-    glm::ivec2 offset[25] = { glm::vec2(-2, 2) ,glm::vec2(-1, 2), glm::vec2(0, 2) , glm::vec2(1, 2) ,glm::vec2(2, 2),
-                        glm::vec2(-2, 1) ,glm::vec2(-1, 1), glm::vec2(0, 1) , glm::vec2(1, 1) ,glm::vec2(2, 1),
-                         glm::vec2(-2, 0) , glm::vec2(-1, 0) , glm::vec2(0, 0) , glm::vec2(1, 0) , glm::vec2(2, 0),
-                        glm::vec2(-2, -1) ,glm::vec2(-1, -1), glm::vec2(0, -1) , glm::vec2(1, -1) ,glm::vec2(2, -1),
-                        glm::vec2(-2, -2) ,glm::vec2(-1, -2), glm::vec2(0, -2) , glm::vec2(1, -2) ,glm::vec2(2, -2) };
+    glm::ivec2 offset[25] = { glm::ivec2(-2, 2) ,glm::ivec2(-1, 2), glm::ivec2(0, 2) , glm::ivec2(1, 2) ,glm::ivec2(2, 2),
+                        glm::ivec2(-2, 1) ,glm::ivec2(-1, 1), glm::ivec2(0, 1) , glm::ivec2(1, 1) ,glm::ivec2(2, 1),
+                         glm::ivec2(-2, 0) , glm::ivec2(-1, 0) , glm::ivec2(0, 0) , glm::ivec2(1, 0) , glm::ivec2(2, 0),
+                        glm::ivec2(-2, -1) ,glm::ivec2(-1, -1), glm::ivec2(0, -1) , glm::ivec2(1, -1) ,glm::ivec2(2, -1),
+                        glm::ivec2(-2, -2) ,glm::ivec2(-1, -2), glm::ivec2(0, -2) , glm::ivec2(1, -2) ,glm::ivec2(2, -2) };
 
     glm::vec3 sum = glm::vec3(0.f);
     glm::vec3 curr_pos = gBuffer[index].position;
@@ -186,7 +187,10 @@ __device__ void denoiseIteration(int index, int x, int y, int step,
 
     float cum_w = 0.f;
     for (int i = 0; i < 25; i++) {
-        glm::vec2 temp_cords = glm::clamp(glm::ivec2(x, y) + offset[i] * step, glm::ivec2(0.f, 0.f), resolution);
+        glm::ivec2 temp_cords = glm::ivec2(x, y);
+        temp_cords += offset[i] * step;
+        temp_cords.x = glm::clamp(temp_cords.x, 0, resolution.x - 1);
+        temp_cords.y = glm::clamp(temp_cords.y, 0, resolution.y - 1);
         if (temp_cords.x < resolution.x && temp_cords.y < resolution.y) {
             int temp_index = temp_cords.x + (temp_cords.y * resolution.x);
 
@@ -658,7 +662,7 @@ void showGBuffer(uchar4* pbo) {
     gbufferToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, dev_gBuffer);
 }
 
-void showDenoise(uchar4* pbo, int iter, int filterSize, int c_weight, int p_weight, int n_weight) {
+void showDenoise(uchar4* pbo, int iter, int filterSize, float c_weight, float p_weight, float n_weight) {
     const Camera& cam = hst_scene->state.camera;
     const dim3 blockSize2d(8, 8);
     const dim3 blocksPerGrid2d(
