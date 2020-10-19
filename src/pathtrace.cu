@@ -136,7 +136,8 @@ __global__ void imageToBuffer(GBufferPixel* gBuffer, glm::ivec2 resolution,
     }
 }
 
-__global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* gBuffer, int logFilterSize) {
+__global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, 
+    int c_weight, int p_weight, int n_weight, GBufferPixel* gBuffer, int logFilterSize) {
     
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -145,13 +146,12 @@ __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* g
 
         int index = x + (y * resolution.x);
 
-        // how many iterations to fill filter size?
-        int iterations = logFilterSize;
-
-        for (int i = 0; i < iterations; i++) {
+        for (int i = 0; i < logFilterSize; i++) {
             int step = pow(2.f, i);
-            denoiseIteration(index, x, y, step, resolution, gBuffer);
+            denoiseIteration(index, x, y, step, c_weight, p_weight, n_weight, resolution, gBuffer);
+            __syncthreads();
             pingPongGbuffer(index, gBuffer);
+            __syncthreads();
         }
 
         glm::vec3 color = gBuffer[index].denoise_color;
@@ -162,7 +162,8 @@ __global__ void denoiseToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* g
     }
 }
 
-__device__ void denoiseIteration(int index, int x, int y, int step, glm::ivec2 resolution, GBufferPixel* gBuffer) {
+__device__ void denoiseIteration(int index, int x, int y, int step, 
+    int c_weight, int p_weight, int n_weight, glm::ivec2 resolution, GBufferPixel* gBuffer) {
     
     //kernel
     float kernel[25] = { 1.f / 16.f, 1.f / 16.f , 1.f / 16.f , 1.f / 16.f , 1.f / 16.f,
@@ -183,10 +184,6 @@ __device__ void denoiseIteration(int index, int x, int y, int step, glm::ivec2 r
     glm::vec3 curr_nor = gBuffer[index].normal;
     glm::vec3 curr_color = gBuffer[index].denoise_color;
 
-    float c_phi = 1.f;
-    float n_phi = 1.f;
-    float p_phi = 1.f;
-
     float cum_w = 0.f;
     for (int i = 0; i < 25; i++) {
         glm::vec2 temp_cords = glm::clamp(glm::ivec2(x, y) + offset[i] * step, glm::ivec2(0.f, 0.f), resolution);
@@ -196,21 +193,21 @@ __device__ void denoiseIteration(int index, int x, int y, int step, glm::ivec2 r
             glm::vec3 temp_color = gBuffer[temp_index].denoise_color;
             glm::vec3 t = curr_color - temp_color;
             float dist2 = glm::dot(t, t);
-            float color_weight = glm::min(glm::exp(-(dist2)/c_phi), 1.f);
+            float color_weight = glm::min(glm::exp(-(dist2)/c_weight), 1.f);
 
             glm::vec3 temp_nor = gBuffer[temp_index].normal;
             t = curr_nor - temp_nor;
             dist2 = glm::dot(t, t);
-            float nor_weight = glm::min(glm::exp(-(dist2) / n_phi), 1.f);
+            float nor_weight = glm::min(glm::exp(-(dist2) / n_weight), 1.f);
 
             glm::vec3 temp_pos = gBuffer[temp_index].position;
             t = curr_pos - temp_pos;
             dist2 = glm::dot(t, t);
-            float pos_weight = glm::min(glm::exp(-(dist2) / p_phi), 1.f);
+            float pos_weight = glm::min(glm::exp(-(dist2) / p_weight), 1.f);
 
             float weight = color_weight * nor_weight * pos_weight;
-            sum += temp_color * 1.f * kernel[i];
-            cum_w += 1.f * kernel[i];
+            sum += temp_color * weight * kernel[i];
+            cum_w += weight * kernel[i];
         }
     }
     gBuffer[index].updated_denoise_color = sum / cum_w;
@@ -661,7 +658,7 @@ void showGBuffer(uchar4* pbo) {
     gbufferToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, dev_gBuffer);
 }
 
-void showDenoise(uchar4* pbo, int iter, int filterSize) {
+void showDenoise(uchar4* pbo, int iter, int filterSize, int c_weight, int p_weight, int n_weight) {
     const Camera& cam = hst_scene->state.camera;
     const dim3 blockSize2d(8, 8);
     const dim3 blocksPerGrid2d(
@@ -670,7 +667,7 @@ void showDenoise(uchar4* pbo, int iter, int filterSize) {
 
     // CHECKITOUT: process the gbuffer results and send them to OpenGL buffer for visualization
     imageToBuffer << <blocksPerGrid2d, blockSize2d >> > (dev_gBuffer, cam.resolution, iter, dev_image);
-    denoiseToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, dev_gBuffer, filterSize);
+    denoiseToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, c_weight, p_weight, n_weight, dev_gBuffer, filterSize);
 }
 
 void showImage(uchar4* pbo, int iter) {
