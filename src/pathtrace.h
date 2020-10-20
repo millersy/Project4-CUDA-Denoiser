@@ -6,11 +6,9 @@
 
 void pathtraceInit(Scene *scene);
 void pathtraceFree();
-void pathtrace(int frame, int iteration);
+void pathtrace(int frame, int iteration, bool denoise, int filterSize, float c_weight, float p_weight, float n_weight);
 void showGBuffer(uchar4* pbo);
 void showImage(uchar4* pbo, int iter);
 void showDenoise(uchar4* pbo, int iter, int filterSize, float c_weight, float p_weight, float n_weight);
-void denoiseIteration(int index, int x, int y, int step, float c_weight, float p_weight, float n_weight, glm::ivec2 resolution, GBufferPixel* gBuffer);
-void pingPongGbuffer(int index, GBufferPixel* gBuffer);
 
 PerformanceTimer& timer();

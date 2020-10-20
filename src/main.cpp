@@ -164,16 +164,13 @@ void runCuda() {
 
         // execute the kernel
         int frame = 0;
-        pathtrace(frame, iteration);
+        pathtrace(frame, iteration, ui_denoise, (int)(log2(ui_filterSize / 2) + 1.f), ui_colorWeight, ui_positionWeight, ui_normalWeight);
         //double time = timer().getGpuElapsedTimeForPreviousOperation();
         //totalTime += time;
     }
 
     if (ui_showGbuffer) {
         showGBuffer(pbo_dptr);
-    }
-    else if (ui_denoise) {
-        showDenoise(pbo_dptr, iteration, (int)(log2(ui_filterSize / 2) + 1.f), ui_colorWeight, ui_positionWeight, ui_normalWeight);
     }
     else {
         showImage(pbo_dptr, iteration);
