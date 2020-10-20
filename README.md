@@ -48,12 +48,12 @@ With the same parameters, the scene with the smaller light has a siginifcant low
 #### Runtime at Different Resolutions
 ![](img/VaryingResolutionGraph.png)
 
-This graph shows that for each tested resolution, the average iteration runtime in ms is greater for the denoised image than the noisy image. This makes sense since more work is being done per iteration for the denoised image.
+This graph shows that for each tested resolution, the average iteration runtime in ms is greater for the denoised image than the noisy image. These results match my hypothesis that the runtime would increase with a greater resolution because there are more pixels in images that have a greater resolution. This means that there are more pixels to run the denoise algorithm on at every iteration. 
 
 #### Runtime with Varying Filter Sizes
 ![](img/FilterSizeGraph.png)
 
-This chart shows that the average runtime per iteration increases with increasing filter sizes, however the runtime increase is smaller as the filter goes up. The increase in runtime is still significant though. 
+This chart shows that the average runtime per iteration increases with increasing filter sizes, however the runtime increase is smaller as the filter goes up. The increase in runtime is still significant though. This result also matches my hypothesis because greater filter sizes mean more iterations of the denoise algorithm per pixel. It also makes sense that the runtime increase is less as the filter size increases because every iteration multiples the step size by two, so the step size grows larger between each iteration at larger filter sizess. Thi means there is a lower increase in iterations between larger filter sizes. 
 
 ### Bloopers
 ![](img/renders/prj4/prj4Blooper.png)
